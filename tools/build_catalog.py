@@ -37,6 +37,56 @@ def loft_mesh(rings, segments=8):
     indices=sum(([indices[i],indices[i+2],indices[i+1]] for i in range(0,len(indices),3)),[])
     return dict(vertices=vertices,normals=normals,indices=indices)
 
+def oriented(vertices, normals, triangles):
+    """Orders each triangle the way loft_mesh does (Godot front faces: cross product against the normal)."""
+    indices=[]
+    for a,b,c in triangles:
+        p,q,r=vertices[a],vertices[b],vertices[c]
+        u=[q[k]-p[k] for k in range(3)];v=[r[k]-p[k] for k in range(3)]
+        cross=[u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]]
+        n=[normals[a][k]+normals[b][k]+normals[c][k] for k in range(3)]
+        indices.extend([a,b,c] if sum(cross[k]*n[k] for k in range(3))<0 else [a,c,b])
+    return indices
+
+def visor_mesh(head, cz, steps=6, spread=math.radians(78)):
+    """Curved cap peak: starts on the scalp over the forehead and only projects forwards,
+    dipping slightly at the tip, with a thin rim so it reads from the side."""
+    rows=[]
+    for i in range(steps+1):
+        a=-spread+2*spread*i/steps
+        sn,cs=math.sin(a),math.cos(a)
+        inner=[head*.385*sn,head*.735,cz-head*.405*cs]
+        reach=head*(.06+.23*cs**1.5)
+        outer=[inner[0]*1.05,head*(.735-.09*cs),inner[2]-reach]
+        rows.append((inner,outer))
+    t=head*.022
+    vertices,normals,tris=[],[],[]
+    for sign in (1,-1):
+        base=len(vertices)
+        for inner,outer in rows:
+            for p in (inner,outer):
+                vertices.append([p[0],p[1]+(t*.5 if sign>0 else -t*.5),p[2]]);normals.append([0,sign,0])
+        for i in range(steps):
+            a,b,c,d=base+2*i,base+2*i+1,base+2*i+2,base+2*i+3
+            tris+=[(a,b,d),(a,d,c)]
+    base=len(vertices)
+    for inner,outer in rows:
+        dx,dz=outer[0]-inner[0],outer[2]-inner[2]
+        length=max(.0001,math.hypot(dx,dz))
+        for dy in (t*.5,-t*.5):
+            vertices.append([outer[0],outer[1]+dy,outer[2]]);normals.append([dx/length,0,dz/length])
+    for i in range(steps):
+        a,b,c,d=base+2*i,base+2*i+1,base+2*i+2,base+2*i+3
+        tris+=[(a,b,d),(a,d,c)]
+    return dict(vertices=vertices,normals=normals,indices=oriented(vertices,normals,tris))
+
+# Wooden mannequin finishes (docs/futuro/02_ESTILO_VISUAL_Y_POLIGONOS.md, 3.1). The trait keeps its
+# 'skin' keys so casting draws stay identical; person.gd paints the body with the mapped wood.
+cat['tonos_madera']={'arce':'d8b27f','haya':'c79463','roble':'a8744a','nogal':'76492e'}
+cat.setdefault('madera_por_tono',{'clara':'arce','media':'haya','morena':'roble','oscura':'nogal'})
+# Street-shoe palette; picked per person from its traits (scripts/person.gd), not a predicate.
+cat.setdefault('tonos_calzado',{'negro':'26282b','marrón':'5b3a26','blanco':'e3dfd4','gris':'62676d'})
+JOINT=.22
 for profile in cat['perfiles']:
     h,w,ratio,j=(profile[k] for k in ('altura','hombros','relacion_cabeza','radio'))
     nz,head=h-h/ratio,h/ratio
@@ -61,21 +111,29 @@ for profile in cat['perfiles']:
                 n=[u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]]
                 length=max(.0001,math.sqrt(sum(t*t for t in n)))
                 n=[t/length for t in n]
+                # Point the normal away from the bone axis: mirrored panels came out facing inwards,
+                # which the toon bands render as solid shadow.
+                centre=[sum(p[k] for p in points)/len(points) for k in range(3)]
+                if n[0]*centre[0]+n[2]*centre[2]<0: n=[-t for t in n]
                 ids=[]
                 for i in range(1,len(points)-1): ids.extend([0,i,i+1])
                 # Front/back avoid disappearance of seams from grazing angles.
                 ids+=sum(([ids[i],ids[i+2],ids[i+1]] for i in range(0,len(ids),3)),[])
-                shape('mesh',bone,color,vertices=points,normals=[n]*len(points),indices=ids,collision=False,**kwargs)
+                # Double-sided panels are left out of the ink outline: its hull pass would cover them.
+                shape('mesh',bone,color,vertices=points,normals=[n]*len(points),indices=ids,collision=False,outline=False,**kwargs)
             if slot=='cuerpo':
                 loft('cabeza',[(head*y,head*x,head*z,head*offset) for y,x,z,offset in [
                     (0,.17,.20,-.025),(.12,.28,.30,-.03),(.34,.36,.365,-.015),
                     (.64,.375,.395,.015),(.84,.31,.34,.025),(.96,.19,.23,.025),(1,.045,.06,.025)]],'piel',10)
                 seg('cuello',[0,-nz*.025,0],[0,nz*.045,0],j*.82,j*.73,'piel')
+                # Visible ball joints of the drawing mannequin, a shade darker than the wood.
+                ball('cuello',[0,nz*.035,0],[j*1.9,j*1.3,j*1.9],'piel',darken=JOINT)
                 for side in ['I','D']:
                     length=nz*.085
                     loft('mano.'+side,[(-length,j*.25,j*.23,-.004),(-length*.82,j*.57,j*.35,-.008),(-length*.32,j*.65,j*.40,0),(0,j*.50,j*.43,0)],'piel',6)
                     sign=-1 if side=='I' else 1
                     ball('mano.'+side,[sign*j*.59,-length*.32,-j*.08],[j*.6,length*.55,j*.57],'piel')
+                    ball('mano.'+side,[0,0,0],[j*1.55]*3,'piel',darken=JOINT)
             elif slot=='torso':
                 casual=piece['style'] in ('plain','hood')
                 bulk=1.08 if piece['style']=='hood' else 1.0
@@ -98,16 +156,16 @@ for profile in cat['perfiles']:
                         patch('lumbar',[[sign*shoulder*.3,nz*.025,-shoulder*.54],[sign*shoulder*.64,nz*.035,-shoulder*.47],[sign*shoulder*.64,nz*.05,-shoulder*.47],[sign*shoulder*.3,nz*.04,-shoulder*.54]],'tela_a',darken=.17)
                 for side in ['I','D']:
                     arm,fore,sleeve=nz*.215,nz*.169,piece['sleeve']
-                    ball('brazo.'+side,[0,-j*.13,0],[j*2.18,j*2.0,j*2.22],'tela_a')
+                    ball('brazo.'+side,[0,-j*.25,0],[j*1.95,j*1.7,j*2.0],'tela_a')
                     end=-arm*sleeve
-                    loft('brazo.'+side,[(end,j*.85,j*.87,0),(end*.64,j*1.08,j*1.04,0),(-j*.1,j*1.07,j*1.07,0)],'tela_a',6)
+                    loft('brazo.'+side,[(end,j*.95,j*.97,0),(end*.64,j*1.16,j*1.12,0),(-j*.1,j*1.10,j*1.10,0)],'tela_a',6)
                     if sleeve<1:
-                        seg('brazo.'+side,[0,end+.004,0],[0,-arm,0],j*.8,j*.75,'piel')
-                        loft('brazo.'+side,[(end-.004,j*.88,j*.90,0),(end+.007,j*.92,j*.94,0)],'tela_a',6,darken=.16)
+                        seg('brazo.'+side,[0,end+.004,0],[0,-arm,0],j*.9,j*.84,'piel')
+                        loft('brazo.'+side,[(end-.004,j*.98,j*1.00,0),(end+.007,j*1.02,j*1.04,0)],'tela_a',6,darken=.16)
                     fc='tela_a' if sleeve==1 else 'piel'
-                    ball('antebrazo.'+side,[0,0,0],[j*1.70]*3,fc)
-                    loft('antebrazo.'+side,[(-fore,j*.59,j*.60,0),(-fore*.60,j*.80,j*.80,0),(-fore*.15,j*.86,j*.88,0),(0,j*.78,j*.81,0)],fc,6)
-                    if sleeve==1: loft('antebrazo.'+side,[(-fore,j*.63,j*.65,0),(-fore+.014,j*.66,j*.68,0)],'tela_a',6,darken=.17)
+                    ball('antebrazo.'+side,[0,0,0],[j*(2.4 if fc=='piel' else 1.90)]*3,fc,darken=JOINT if fc=='piel' else 0)
+                    loft('antebrazo.'+side,[(-fore,j*.66,j*.67,0),(-fore*.60,j*.90,j*.90,0),(-fore*.15,j*.96,j*.98,0),(0,j*.88,j*.91,0)],fc,6)
+                    if sleeve==1: loft('antebrazo.'+side,[(-fore,j*.70,j*.72,0),(-fore+.014,j*.73,j*.75,0)],'tela_a',6,darken=.17)
                 if piece['style']=='sport':
                     for sign in [-1,1]:
                         patch('lumbar',[[sign*shoulder*.60,nz*.02,-shoulder*.55],[sign*shoulder*.70,nz*.02,-shoulder*.53],[sign*shoulder*.70,nz*.20,-shoulder*.55],[sign*shoulder*.60,nz*.20,-shoulder*.57]],'acento')
@@ -123,24 +181,34 @@ for profile in cat['perfiles']:
                     thigh=nz*(.542-.323);calf=nz*(.323-.03)
                     tc='piel' if skirt else 'tela_b'
                     # The concealed hip joint is inside the pelvis. Rounded ends overlap at the knee.
-                    loft('muslo.'+side,[(-thigh,j*.96,j*1.02,0),(-thigh*.55,j*1.27,j*1.26,0),(0,j*1.42,j*1.48,0)],tc,6)
+                    # Trouser thighs continue above the joint into the pelvis, filling the raised
+                    # leg openings at the hips; under a skirt they would poke through its waist.
+                    top=[] if skirt else [(nz*.075,j*1.40,j*1.44,0)]
+                    loft('muslo.'+side,[(-thigh,j*1.26,j*1.32,0),(-thigh*.55,j*1.55,j*1.54,0),(0,j*1.45,j*1.50,0)]+top,tc,6)
                     kc='piel' if short else 'tela_b'
-                    ball('pierna.'+side,[0,0,0],[j*1.91]*3,kc)
-                    loft('pierna.'+side,[(-calf,j*.65,j*.70,0),(-calf*.65,j*.84,j*.95,.006),(-calf*.25,j*1.01,j*1.10,.008),(0,j*.91,j*.96,0)],kc,6)
+                    ball('pierna.'+side,[0,0,0],[j*(2.8 if kc=='piel' else 2.5)]*3,kc,darken=JOINT if kc=='piel' else 0)
+                    loft('pierna.'+side,[(-calf,j*.84,j*.90,0),(-calf*.65,j*1.10,j*1.24,.006),(-calf*.25,j*1.32,j*1.43,.008),(0,j*1.19,j*1.25,0)],kc,6)
                     if not skirt and short:
-                        loft('muslo.'+side,[(-thigh,j*1.0,j*1.07,0),(-thigh+.012,j*1.03,j*1.09,0)],'tela_b',6,darken=.18)
+                        loft('muslo.'+side,[(-thigh,j*1.30,j*1.37,0),(-thigh+.012,j*1.33,j*1.39,0)],'tela_b',6,darken=.18)
                     ankle=nz*.03
-                    loft('pie.'+side,[(-ankle,j*.82,j*2.1,-j*.48),(-ankle+.012,j*.97,j*2.32,-j*.5),(ankle*.24,j*.84,j*2.06,-j*.35),(ankle*.70,j*.63,j*1.20,.005)],'acento' if piece.get('sport') else 'tela_b',8,darken=.05 if piece.get('sport') else .25)
-                    loft('pie.'+side,[(-ankle,j*.83,j*2.12,-j*.48),(-ankle+.010,j*.97,j*2.34,-j*.5)],'tela_b',6,darken=.55)
+                    # Footwear has its own colour zone: trainers stay light, street shoes use 'calzado'.
+                    shoe='acento' if piece.get('sport') else 'calzado'
+                    loft('pie.'+side,[(-ankle,j*.82,j*2.1,-j*.48),(-ankle+.012,j*.97,j*2.32,-j*.5),(ankle*.24,j*.84,j*2.06,-j*.35),(ankle*.70,j*.63,j*1.20,.005)],shoe,8,darken=.05)
+                    loft('pie.'+side,[(-ankle,j*.83,j*2.12,-j*.48),(-ankle+.010,j*.97,j*2.34,-j*.5)],shoe,6,darken=.45)
                 if skirt:
-                    loft('caderas',[(nz*y,shoulder*x,shoulder*z,0) for y,x,z in [(-.295,1.08,.77),(-.28,1.11,.79),(-.04,.83,.60),(.10,.76,.55)]],'tela_b',8)
+                    loft('caderas',[(nz*y,shoulder*x,shoulder*z,0) for y,x,z in [(-.295,1.08,.77),(-.28,1.11,.79),(-.04,1.07,.68),(.10,.95,.59)]],'tela_b',8)
                     loft('caderas',[(-nz*.297,shoulder*1.085,shoulder*.777,0),(-nz*.286,shoulder*1.105,shoulder*.790,0)],'tela_b',8,darken=.22)
             elif slot=='cabeza':
                 hair=piece['style'];color='tela_b' if hair in ('cap','hat','beanie') else 'pelo'
-                if hair!='bald':
+                if hair=='cap':
+                    # Smooth crown ending in a clean band at peak height, closed on top.
+                    crown=loft_mesh([(head*y,head*x,head*z,head*.03) for y,x,z in [(.60,.405,.425),(.80,.375,.405),(.95,.255,.295),(1.04,.04,.07)]],10)
+                    crown['indices']=crown['indices'][:-60]+crown['indices'][-30:]
+                    shape('mesh','cabeza',color,**crown)
+                elif hair!='bald':
                     # Scalp follows the skull, with a high forehead and a lower nape.
                     rings=[(.39,.325,.34),(.66,.392,.414),(.85,.33,.365),(.98,.195,.245),(1.025,.035,.065)]
-                    m=loft_mesh([(head*y,head*x,head*z,head*.035) for y,x,z in rings],8)
+                    m=loft_mesh([(head*y,head*x,head*z,head*.035) for y,x,z in rings],10)
                     # Raise the front hairline without covering the faceless oval.
                     for i in range(10):
                         front=max(0,math.cos(math.tau*i/10))
@@ -157,8 +225,8 @@ for profile in cat['perfiles']:
                     loft('cabeza',[(head*y,head*x,head*z,head*cz) for y,x,z,cz in [(-.11,.07,.065,.51),(.07,.16,.12,.55),(.36,.17,.14,.56),(.58,.10,.09,.43)]],color,6)
                     ball('cabeza',[0,head*.55,head*.41],[head*.21,head*.18,head*.19],color,darken=.28)
                 if hair=='cap':
-                    # Curved visor, shallow enough to read as fabric instead of a box.
-                    loft('cabeza',[(head*.727,head*.40,head*.37,-head*.31),(head*.758,head*.42,head*.41,-head*.30)],color,8,darken=.12)
+                    # Peak only in front of the forehead; a full ring read as a halo from the front.
+                    shape('mesh','cabeza',color,**visor_mesh(head,head*.035),darken=.12)
                 if hair=='hat':
                     loft('cabeza',[(head*.82,head*.66,head*.63,0),(head*.86,head*.66,head*.63,0)],color,10)
                     loft('cabeza',[(head*.86,head*.36,head*.37,0),(head*1.28,head*.32,head*.33,0)],color,8)

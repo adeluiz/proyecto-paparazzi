@@ -58,12 +58,13 @@ func setup(t: Dictionary, catalog: Dictionary, seed_value: int) -> void:
 	skin = Skin.new()
 	for i in rests.size(): skin.add_bind(i, rests[i].affine_inverse())
 	var colors = {
-		"piel":Color(catalog.tonos_piel[t.skin]),
+		"piel":Color(catalog.tonos_madera[catalog.madera_por_tono[t.skin]]),
 		"acento":Color("eee9dc"),
 		"accesorio":Color(catalog.tonos_ropa[t.get("accessory_color","rojo")].rgb),
 		"tela_a":Color(catalog.tonos_ropa[t.upper_color].rgb),
 		"tela_b":Color(catalog.tonos_ropa[t.lower_color].rgb),
-		"pelo":Color(catalog.tonos_pelo[t.hair_color].rgb)
+		"pelo":Color(catalog.tonos_pelo[t.hair_color].rgb),
+		"calzado":Color(catalog.tonos_calzado[shoe_color(t,catalog)])
 	}
 	var slots = {"cuerpo":0,"torso":t.upper,"piernas":t.lower,"cabeza":t.hair,"accesorio":t.get("accessory",0)}
 	for piece in profile.piezas:
@@ -84,6 +85,15 @@ func bone(id: String, parent: String, world: Vector3) -> void:
 		rig.set_bone_rest(i,rests[p].affine_inverse()*transform)
 	else: rig.set_bone_rest(i,transform)
 	rests.append(transform)
+
+# Derived from the traits instead of the RNG, so casting and navigation sequences stay unchanged
+# and the briefing portrait always matches its target.
+static func shoe_color(t: Dictionary, catalog: Dictionary) -> String:
+	var shoes: Array = catalog.tonos_calzado.keys()
+	if t.has("shoe_color"): return t.shoe_color
+	# Dress trousers only take dark leather tones.
+	if catalog.piezas.piernas[t.lower].get("style","") == "formal": shoes = ["negro","marrón"]
+	return shoes[posmod(hash("%d|%s|%s|%s" % [t.profile,t.upper_color,t.lower_color,t.hair_color]),shoes.size())]
 
 func make_rig() -> void:
 	bone("raiz","",Vector3.ZERO)
@@ -110,7 +120,8 @@ func ellipsoid(id: String, pos: Vector3, size: Vector3, color: Color) -> void:
 	primitive.radius = .5
 	primitive.height = 1
 	primitive.radial_segments = 7 if id == "cabeza" else 8 if id.begins_with("brazo.") else 6
-	primitive.rings = 2
+	# Shoulders get an extra ring: with two they end in a peak above the sleeve.
+	primitive.rings = 3 if id.begins_with("brazo.") else 2
 	append_primitive(primitive,id,Transform3D(Basis.from_scale(size),pos),color)
 
 func box(id: String, pos: Vector3, size: Vector3, color: Color) -> void:
@@ -160,6 +171,26 @@ func append_primitive(primitive: Mesh, id: String, tr: Transform3D, color: Color
 		batch.w.append_array(PackedFloat32Array([1,0,0,0]))
 	for index in arrays[Mesh.ARRAY_INDEX]: batch.i.append(index+offset)
 
+# Ambient occlusion baked into the vertex colours (no render cost): undersides, the inner faces
+# of arms and thighs, and the lowest part of the legs read darker, which gives the flat colour
+# zones volume. Uses the rest pose, where y is the height above the ground.
+func occlusion(v: Vector3, n: Vector3) -> float:
+	var down = clampf(-n.y,0,1)*.28
+	var inner = clampf(-n.x*signf(v.x),0,1)*clampf((absf(v.x)-.03)/.08,0,1)*.18
+	var ground = clampf(1-v.y/(.3*height),0,1)*.15
+	return 1-minf(down+inner+ground,.4)
+
+# Toon shading plus ink outline (next_pass), shared by every person: one material, two passes.
+static var shared_material: ShaderMaterial
+static func mannequin_material() -> ShaderMaterial:
+	if shared_material == null:
+		shared_material = ShaderMaterial.new()
+		shared_material.shader = preload("res://shaders/cel_shading.gdshader")
+		var outline = ShaderMaterial.new()
+		outline.shader = preload("res://shaders/cel_outline.gdshader")
+		shared_material.next_pass = outline
+	return shared_material
+
 func finish_mesh() -> void:
 	# One draw surface per person: vertex colors preserve the four named color zones.
 	var vertices = PackedVector3Array()
@@ -175,7 +206,9 @@ func finish_mesh() -> void:
 		bone_indices.append_array(batch.b)
 		weights.append_array(batch.w)
 		for index in batch.i: indices.append(index+offset)
-		for vertex in batch.v: colors.append(batch.color)
+		for j in batch.v.size():
+			var shade = occlusion(batch.v[j],batch.n[j])
+			colors.append(Color(batch.color.r*shade,batch.color.g*shade,batch.color.b*shade,batch.color.a))
 	triangle_count = indices.size()/3
 	var arrays = []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -186,11 +219,7 @@ func finish_mesh() -> void:
 	arrays[Mesh.ARRAY_WEIGHTS] = weights
 	arrays[Mesh.ARRAY_COLOR] = colors
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
-	var mat = StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.vertex_color_is_srgb = true
-	mat.roughness = 1
-	mesh.surface_set_material(0,mat)
+	mesh.surface_set_material(0,mannequin_material())
 	var instance = MeshInstance3D.new()
 	instance.mesh = mesh
 	instance.skin = skin
@@ -223,6 +252,8 @@ func vector(values: Array) -> Vector3:
 func build_shape(shape: Dictionary, colors: Dictionary) -> void:
 	var color: Color = colors[shape.color]
 	color = color.darkened(shape.get("darken",0)).lightened(shape.get("lighten",0))
+	# Alpha only flags shapes the ink outline must skip (cel_outline.gdshader); the surface is opaque.
+	if not shape.get("outline",true): color.a = 0
 	match shape.type:
 		"mesh": build_contoured_mesh(shape,color)
 		"ellipsoid": ellipsoid(shape.bone,vector(shape.position),vector(shape.size),color)

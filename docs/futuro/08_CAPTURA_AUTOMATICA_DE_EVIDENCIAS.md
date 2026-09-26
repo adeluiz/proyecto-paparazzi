@@ -83,6 +83,8 @@ graph LR
 
 ### 3.3 Muestrario de Personajes Representativos (`personajes_lineup.png`)
 
+> **Estado actual**: el lineup muestra 6 personajes **de frente** con un campo de visión de 30° para que ocupen el encuadre, y `personajes_vistas.png` añade frente, 3/4, perfil y espalda de dos personajes para revisar uniones y siluetas. Hasta la revisión de 2026-09 todas las capturas de estudio (prendas, cabezas, accesorios y lineup) salían de espaldas, porque los personajes miran a −Z y la cámara del estudio está en +Z; ahora se giran 180°. Las etiquetas de las hojas se leen de `catalogo.json` en lugar de estar escritas a mano.
+
 Generación de una imagen panorámica de alta resolución con una selección representativa de personajes del casting del juego, demostrando la consistencia del rig universal de 20 huesos, el coloreado por vértice (`ARRAY_COLOR`) y las reglas de combinación:
 
 1. **Los 4 Perfiles Anatómicos Base**: Maniquíes de referencia (Estándar, Delgado, Robusto e Infantil) con atuendos neutros para verificar proporciones y pesaje rígido.
@@ -110,7 +112,7 @@ graph TD
 
 | Archivo GIF | Animación Representada | Detalles Técnicos Demostrados |
 |---|---|---|
-| `anim_caminar.gif` | Ciclo de marcha pausada ($v \approx 0.70\text{ m/s}$) | Demuestra el **deslizamiento nulo** (`drift == 0.000000 m/frame`), la planta del pie horizontal ($y = 0$) durante el apoyo y la suave basculación de cadera/hombros calculada en [scripts/gait.gd](file:///home/ganso/codigo/proyecto-paparazzi/scripts/gait.gd). |
+| `anim_caminar.gif` | Ciclo de marcha pausada ($v \approx 0.70\text{ m/s}$) | Demuestra el **deslizamiento nulo** (`drift == 0.000000 m/frame`), la planta del pie horizontal ($y = 0$) durante el apoyo y la suave basculación de cadera/hombros calculada en [scripts/gait.gd](../../scripts/gait.gd). |
 | `anim_correr.gif` | Ciclo de carrera atlética ($v \approx 2.80\text{ m/s}$) | Demuestra la **fase aérea balística** (ambos pies en el aire), la inclinación aerodinámica del torso hacia delante y la flexión pronunciada de rodillas y tobillos. |
 | `anim_clima_luz.gif` | Paso de nubes y ciclo de luz diurno/nocturno | Demuestra la atenuación progresiva de 3 EV, la adaptación de la aguja del exposímetro analógico y el encendido crepuscular de farolas con sombras dinámicas. |
 
@@ -141,7 +143,10 @@ docs/
 │   │   └── sheet_equipamiento.png
 │   │
 │   ├── personajes/              # 3. Elenco representativo
-│   │   └── personajes_lineup.png
+│   │   ├── personajes_lineup.png
+│   │   └── personajes_vistas.png   # frente, 3/4, perfil y espalda
+│   │
+│   ├── comparativas/            # Antes/después de correcciones visuales (a mano, no las genera la suite)
 │   │
 │   └── animaciones/             # 4. GIFs animados de cinemática
 │       ├── anim_caminar.gif
